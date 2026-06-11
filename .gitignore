@@ -1,0 +1,20 @@
+# Runtime / local artifacts
+screens/
+coords_memory.json
+*.log
+/tmp/
+__pycache__/
+*.pyc
+
+# Local/internal docs and environment-specific helpers
+SECOND-LLM-SRV2-HANDOFF-20260606.md
+VM121-CLAW-START.md
+VM121-claw-code.cmd
+VM121-terminal.cmd
+vm121-claw-code.sh
+vm121-terminal.sh
+diadoc_submit.mjs
+
+# OS/editor
+.DS_Store
+Thumbs.db
