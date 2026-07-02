@@ -18,3 +18,4 @@ diadoc_submit.mjs
 # OS/editor
 .DS_Store
 Thumbs.db
+profile_backups/

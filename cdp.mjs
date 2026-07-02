@@ -90,11 +90,74 @@ async function activePage(browser) {
 }
 
 function findInPageFn(re) {
-  // выполняется В СТРАНИЦЕ. Возвращает элемент или null.
+  // выполняется В СТРАНИЦЕ. Возвращает ЛУЧШИЙ элемент или null.
+  // Ранжирование (фикс неоднозначности: 'ORVELIX' не должен цеплять ссылку 'orvelix.ru'):
+  //   точное совпадение текста > по границе слова > startsWith > подстрока;
+  //   +бонус button/role=tab|button, −штраф <a> на ДРУГОЙ origin (уводит со страницы),
+  //   −штраф за «лишний» текст; берём только видимые.
   const rx = new RegExp(re, "i");
   const sels = 'button,a,[role="button"],[role="menuitem"],[role="tab"],input[type=submit],input[type=button],label,[onclick]';
-  const els = [...document.querySelectorAll(sels)];
-  return els.find(e => rx.test(((e.innerText || e.value || e.getAttribute("aria-label") || "")).trim())) || null;
+  const txt = (e) => ((e.innerText || e.value || e.getAttribute("aria-label") || "")).trim();
+  const vis = (e) => { const r = e.getBoundingClientRect(); return r.width > 0 && r.height > 0 && e.offsetParent !== null; };
+  const cands = [...document.querySelectorAll(sels)].filter((e) => rx.test(txt(e)) && vis(e));
+  if (!cands.length) return null;
+  if (cands.length === 1) return cands[0];
+  const needle = re.replace(/[.*+?^${}()|[\]\\]/g, "").trim().toLowerCase();
+  let wb = null; try { wb = new RegExp("\\b" + needle + "\\b", "i"); } catch {}
+  const score = (e) => {
+    const t = txt(e).toLowerCase(); let s = 0;
+    if (t === needle) s += 100;
+    else if (wb && wb.test(t)) s += 50;
+    else if (t.startsWith(needle)) s += 20;
+    if (e.tagName === "BUTTON" || /^(button|tab|menuitem)$/.test(e.getAttribute("role") || "")) s += 10;
+    if (e.tagName === "A") { const h = e.getAttribute("href") || "";
+      try { if (h && new URL(h, location.href).origin !== location.origin) s -= 30; } catch {} }
+    s -= Math.max(0, t.length - needle.length) * 0.1;
+    return s;
+  };
+  return cands.slice().sort((a, b) => score(b) - score(a))[0];
+}
+
+function rankInPageFn(re) {
+  // как findInPageFn, но возвращает ВСЕХ видимых кандидатов со скорингом (для guard'а).
+  const rx = new RegExp(re, "i");
+  const sels = 'button,a,[role="button"],[role="menuitem"],[role="tab"],input[type=submit],input[type=button],label,[onclick]';
+  const txt = (e) => ((e.innerText || e.value || e.getAttribute("aria-label") || "")).trim();
+  const vis = (e) => { const r = e.getBoundingClientRect(); return r.width > 0 && r.height > 0 && e.offsetParent !== null; };
+  const cands = [...document.querySelectorAll(sels)].filter((e) => rx.test(txt(e)) && vis(e));
+  const needle = re.replace(/[.*+?^${}()|[\]\\]/g, "").trim().toLowerCase();
+  let wb = null; try { wb = new RegExp("\\b" + needle + "\\b", "i"); } catch {}
+  const desc = (e) => {
+    const t = txt(e), tl = t.toLowerCase(); let s = 0;
+    if (tl === needle) s += 100; else if (wb && wb.test(tl)) s += 50; else if (tl.startsWith(needle)) s += 20;
+    const role = e.getAttribute("role") || "";
+    if (e.tagName === "BUTTON" || /^(button|tab|menuitem)$/.test(role)) s += 10;
+    let crossOrigin = false;
+    if (e.tagName === "A") { const h = e.getAttribute("href") || "";
+      try { if (h && new URL(h, location.href).origin !== location.origin) { s -= 30; crossOrigin = true; } } catch {} }
+    s -= Math.max(0, t.length - needle.length) * 0.1;
+    const aid = e.getAttribute("automation-id");
+    const sel = e.id ? "#" + e.id : (aid ? '[automation-id="' + aid + '"]' : "");
+    return { text: t.slice(0, 45), tag: e.tagName.toLowerCase(), role, href: (e.getAttribute("href") || ""), crossOrigin, sel, score: +s.toFixed(1) };
+  };
+  return cands.map(desc).sort((a, b) => b.score - a.score);
+}
+
+// guard неоднозначности: кликать молча можно только если выбор однозначен и безопасен.
+function decideTarget(cands) {
+  if (!cands.length) return { notFound: true };
+  const top = cands[0];
+  const exactUnique = top.score >= 100 && (cands.length < 2 || cands[1].score < 100);
+  const risky = (!exactUnique && cands.length >= 2) || top.crossOrigin;
+  if (risky && process.env.CDP_FORCE !== "1") {
+    console.log(`AMBIGUOUS: ${cands.length} вариант(ов) — НЕ кликаю (CDP_FORCE=1 чтобы взять верхний):`);
+    cands.slice(0, 8).forEach((c, i) => console.log(
+      `  [${i}] ${c.tag}${c.role ? "(" + c.role + ")" : ""} "${c.text}"` +
+      `${c.crossOrigin ? " ⚠cross-origin→" + c.href : ""}${c.sel ? "  sel=" + c.sel : ""}  score=${c.score}`));
+    console.log("→ уточни: clicksel '<css>' (sel выше) или более точный текст");
+    return { ambiguous: true };
+  }
+  return { act: true };
 }
 
 (async () => {
@@ -150,6 +213,10 @@ function findInPageFn(re) {
         break;
       }
       case "click": {
+        const cands = await page.evaluate(rankInPageFn, ARGS[0]);
+        const d = decideTarget(cands);
+        if (d.notFound) { console.log("NOT FOUND:", ARGS[0]); code = 2; break; }
+        if (d.ambiguous) { code = 3; break; }
         const handle = await page.evaluateHandle(findInPageFn, ARGS[0]);
         const el = handle.asElement();
         if (!el) { console.log("NOT FOUND:", ARGS[0]); code = 2; break; }
@@ -162,6 +229,23 @@ function findInPageFn(re) {
         await page.waitForSelector(ARGS[0], { timeout: 8000 });
         await page.click(ARGS[0]);
         console.log("clicked sel:", ARGS[0]);
+        break;
+      }
+      case "upload": {   // загрузка файла в <input type=file> (в т.ч. скрытый): upload <filepath> [css]
+        const file = ARGS[0];
+        const sel = ARGS[1] || "input[type=file]";
+        if (!file) { console.log("usage: upload <filepath> [css]"); code = 2; break; }
+        let input = await page.$(sel);
+        if (!input) input = await page.waitForSelector(sel, { timeout: 6000 }).catch(() => null);
+        if (!input) { console.log("NO file input:", sel); code = 2; break; }
+        // лог сетевых ответов аплоада (многие формы грузят файл async по change)
+        const ulog = [];
+        page.on("response", r => { try { if (/upload/i.test(r.url())) ulog.push(r.status() + " " + r.url().slice(0, 70)); } catch {} });
+        await input.uploadFile(file);
+        // держим соединение, пока async-загрузка отработает (иначе disconnect рвёт XHR)
+        await new Promise(r => setTimeout(r, 4000));
+        console.log("uploaded:", file, "->", sel);
+        if (ulog.length) console.log("upload-net:", ulog.join(" | "));
         break;
       }
       case "type": {
@@ -206,18 +290,22 @@ function findInPageFn(re) {
             net.push(`${resp.status()} ${rq.method()} ${resp.url().slice(0, 80)}  ${b.replace(/\s+/g, " ")}`);
           } catch {}
         });
-        // найти элемент по тексту, проскроллить в центр, при необходимости — zoom 0.8
-        const loc = await page.evaluate((re, DESCRIBE) => {
-          const rx = new RegExp(re, "i");
-          const sels = 'button,a,[role="button"],[role="menuitem"],[role="tab"],input[type=submit],input[type=button],label,[onclick]';
-          let el = [...document.querySelectorAll(sels)].find(e => rx.test(((e.innerText || e.value || e.getAttribute("aria-label") || "")).trim()));
-          if (!el) return null;
+        // guard неоднозначности (как у click) — не угадывать молча
+        const tcands = await page.evaluate(rankInPageFn, re);
+        const td = decideTarget(tcands);
+        if (td.notFound) { console.log("NOT FOUND:", re); code = 2; break; }
+        if (td.ambiguous) { code = 3; break; }
+        // лучший элемент (ранжированный топ), проскроллить в центр, при необходимости — zoom 0.8
+        const tHandle = await page.evaluateHandle(findInPageFn, re);
+        const tEl = tHandle.asElement();
+        if (!tEl) { console.log("NOT FOUND:", re); code = 2; break; }
+        const loc = await page.evaluate((el, DESCRIBE) => {
           el.scrollIntoView({ block: "center", inline: "center" });
           if (el.getBoundingClientRect().bottom > 960) document.body.style.zoom = "0.8"; // поднять из-под фолда
           const d = eval(DESCRIBE)(el);
           d.zoomed = document.body.style.zoom && document.body.style.zoom !== "1" ? document.body.style.zoom : null;
           return d;
-        }, re, DESCRIBE);
+        }, tEl, DESCRIBE);
         if (!loc) { console.log("NOT FOUND:", re); code = 2; break; }
         // вооружить проверку попадания
         await page.evaluate((x, y) => { window.__tapHit = false;

@@ -67,9 +67,9 @@ case "${1:-}" in
     rm -f "$PROFILE"/Singleton* "$PROFILE"/Default/DevToolsActivePort 2>/dev/null; true
     rm -f "/tmp/.X${DISP#:}-lock" 2>/dev/null; [ -e "/tmp/.X11-unix/X${DISP#:}" ] && rm -f "/tmp/.X11-unix/X${DISP#:}" 2>/dev/null; true
     for p in "Xvfb $DISP" "fluxbox.*$DISP" "x11vnc.*$PORT"; do pkill -f "$p" 2>/dev/null; done; sleep 1
-    runuser -u hgff -- env -i HOME=/home/hgff PATH=/usr/local/bin:/usr/bin:/bin Xvfb "$DISP" -screen 0 "$SCREEN" -nolisten tcp >>/tmp/vnc_work.log 2>&1 &
+    setsid runuser -u hgff -- env -i HOME=/home/hgff PATH=/usr/local/bin:/usr/bin:/bin Xvfb "$DISP" -screen 0 "$SCREEN" -nolisten tcp >>/tmp/vnc_work.log 2>&1 </dev/null &
     sleep 2; RUN xdpyinfo >/dev/null 2>&1 || { echo "[X] Xvfb не встал"; exit 1; }
-    runuser -u hgff -- env -i HOME=/home/hgff PATH=/usr/local/bin:/usr/bin:/bin DISPLAY="$DISP" fluxbox >>/tmp/vnc_work.log 2>&1 &
+    setsid runuser -u hgff -- env -i HOME=/home/hgff PATH=/usr/local/bin:/usr/bin:/bin DISPLAY="$DISP" fluxbox >>/tmp/vnc_work.log 2>&1 </dev/null &
     sleep 2
     PROXY=""; [ -n "$SOCKS" ] && PROXY="--proxy-server=$SOCKS"
     setsid runuser -u hgff -- env -i HOME=/home/hgff PATH=/usr/local/bin:/usr/bin:/bin DISPLAY="$DISP" LANG=en_US.UTF-8 LC_ALL=en_US.UTF-8 \
@@ -78,7 +78,7 @@ case "${1:-}" in
       --disable-features=PasswordLeakDetection $PROXY --window-position=0,0 --window-size=1920,1080 --new-window "$URL" \
       >>/tmp/vnc_work.log 2>&1 </dev/null &
     sleep 4
-    runuser -u hgff -- env -i HOME=/home/hgff PATH=/usr/local/bin:/usr/bin:/bin x11vnc -display "$DISP" -rfbport "$PORT" -localhost -nopw -forever -shared -quiet >>/tmp/vnc_work.log 2>&1 &
+    setsid runuser -u hgff -- env -i HOME=/home/hgff PATH=/usr/local/bin:/usr/bin:/bin x11vnc -display "$DISP" -rfbport "$PORT" -localhost -nopw -forever -shared -quiet >>/tmp/vnc_work.log 2>&1 </dev/null &
     sleep 2
     WIN=$(RUN xdotool search --class chromium 2>/dev/null | head -1); [ -n "$WIN" ] && RUN xdotool windowsize "$WIN" 1920 1080 2>/dev/null
     echo "[OK] стек поднят. CDP=$CDP VNC=localhost:$PORT URL=$URL ${SOCKS:+SOCKS=$SOCKS}"
@@ -88,6 +88,7 @@ case "${1:-}" in
   find)     NODE find "$2" ;;
   click)    NODE click "$2" ;;
   clicksel) NODE clicksel "$2" ;;
+  upload)   NODE upload "$2" "${3:-input[type=file]}" ;;  # загрузить файл: upload <путь> [css-инпута]
   type)     NODE type "$2" "${3:-}" ;;
   press)    NODE press "$2" ;;
   wait)     NODE wait "$2" "${3:-15000}" ;;
