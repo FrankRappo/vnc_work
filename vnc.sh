@@ -27,6 +27,9 @@
 #   wait <css> [ms]     дождаться селектора (CDP)
 #   eval '<js>'         выполнить JS в странице (CDP)
 #   url                 URL вкладок
+#   tabs                список вкладок: id + url (CDP HTTP /json)
+#   front <url-подстр>  вывести вкладку на передний план (CDP /json/activate) — если открылась чужая вкладка
+#   closetab <url-подстр>  закрыть вкладку(и) по подстроке URL (CDP /json/close)
 #   bbox <css|text>     нативные коорд. центра элемента "x y" (для xclick)
 #   xclick <x> <y>      нативный клик мышью (xdotool) — для chrome-попапов/canvas
 #   xkey <keyseq>       нативная клавиша (xdotool: Escape, ctrl+v…)
@@ -115,13 +118,44 @@ case "${1:-}" in
   shot)
     L="${2:-shot}"; RUN scrot -o "$SCREENS/$L.png" && convert "$SCREENS/$L.png" -quality 88 "$SCREENS/$L.jpg" && echo "$SCREENS/$L.jpg" ;;
   viewer)
-    setsid runuser -u hgff -- env -i HOME=/home/hgff PATH=/usr/local/bin:/usr/bin:/bin DISPLAY=:0 xtigervncviewer -SecurityTypes None localhost:"$PORT" </dev/null >/tmp/vnc_work_viewer.log 2>&1 & disown
-    echo "[+] вьюер запущен (или подключись Windows-TigerVNC к localhost:$PORT)" ;;
+    # 🔴 Рабочий способ (2026-07-02): окно вьювера на десктопе Windows (через WSLg :0) живёт ТОЛЬКО
+    # если запущено в ПЕРСИСТЕНТНОЙ tmux-сессии. Прямой setsid/disown умирает при завершении вызова
+    # (агентский bash тащит SIGTERM за детьми); запуск от hgff через `env -i` вьювер вообще не стартует
+    # (пустой лог). Root + DISPLAY=:0 + tmux-сессия = работает (X0-сокет world-writable). См. VNC_LAUNCH.md.
+    VS="vnc_viewer_$PORT"
+    tmux kill-session -t "$VS" 2>/dev/null; sleep 1
+    tmux new-session -d -s "$VS"; sleep 1
+    tmux send-keys -t "$VS" "DISPLAY=:0 XDG_RUNTIME_DIR=/mnt/wslg/runtime-dir xtigervncviewer -SecurityTypes None -Fullscreen=0 localhost:$PORT >/tmp/$VS.log 2>&1" Enter
+    sleep 4
+    if pgrep -f "xtigervncviewer.*localhost:$PORT" >/dev/null 2>&1; then
+      echo "[+] вьювер-окно на десктопе Windows (tmux $VS; connect-лог /tmp/$VS.log). Снять: tmux kill-session -t $VS"
+    else
+      echo "[!] вьювер не поднялся — см /tmp/$VS.log; запасной путь: свой Windows-TigerVNC → localhost:$PORT"
+    fi ;;
+  tabs)
+    curl -sS -m8 "http://127.0.0.1:$CDP/json" 2>/dev/null | python3 -c "import sys,json;[print(t['id'],'|',t.get('url','')[:90]) for t in json.load(sys.stdin) if t.get('type')=='page']" ;;
+  front|closetab)
+    # front <url-подстр> = вывести вкладку на перед; closetab <url-подстр> = закрыть. Через DevTools HTTP.
+    ACT=$([ "$1" = closetab ] && echo close || echo activate)
+    curl -sS -m8 "http://127.0.0.1:$CDP/json" 2>/dev/null | python3 -c "
+import sys,json,urllib.request
+port,act,sub=sys.argv[1],sys.argv[2],sys.argv[3]
+if not sub: print('нужна подстрока URL: vnc.sh',act,'<url-подстр>'); sys.exit(1)
+hit=0
+for t in json.load(sys.stdin):
+    if t.get('type')=='page' and sub in t.get('url',''):
+        try: r=urllib.request.urlopen('http://127.0.0.1:%s/json/%s/%s'%(port,act,t['id']),timeout=8).read().decode()
+        except Exception as e: r='ERR '+str(e)
+        print(act,'->',t.get('url','')[:60],'::',r); hit+=1
+        if act=='activate': break
+if not hit: print('вкладок с URL ~',repr(sub),'нет')
+" "$CDP" "$ACT" "${2:-}" ;;
   status)
     cdp_alive && echo "chromium/CDP $CDP: OK" || echo "chromium/CDP $CDP: нет"
     ss -ltn 2>/dev/null | grep -q ":$PORT " && echo "x11vnc $PORT: слушает" || echo "x11vnc $PORT: нет"
     [ -n "$SOCKS" ] && echo "SOCKS exit: $(curl -s -m8 --socks5 "${SOCKS#socks5://}" https://api.ipify.org 2>/dev/null)" ;;
   down)
+    tmux kill-session -t "vnc_viewer_$PORT" 2>/dev/null
     pkill -f "remote-debugging-port=$CDP" 2>/dev/null; pkill -f "x11vnc.*$PORT" 2>/dev/null
     pkill -f "fluxbox.*$DISP" 2>/dev/null; pkill -f "Xvfb $DISP" 2>/dev/null; pkill -f "xtigervncviewer.*$PORT" 2>/dev/null
     echo "[OK] стек погашен (SOCKS, если был, оставлен)" ;;
