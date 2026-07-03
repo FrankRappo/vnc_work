@@ -10,7 +10,9 @@ SCREENS="${AD_SCREENS:-/work/vnc_work/screens}"
 SCREEN="${AD_SCREEN:-1920x1080x24}"
 PULSE="${AD_PULSE-unix:/mnt/wslg/PulseServer}"
 RT=/tmp/xrt99; mkdir -p "$RT" 2>/dev/null; chown hgff:hgff "$RT" 2>/dev/null
-U(){ runuser -u hgff -- env -i HOME=/home/hgff PATH=/usr/local/bin:/usr/bin:/bin DISPLAY="$DISP" "$@"; }
+# U(): выполнить как hgff на :99. Если скрипт УЖЕ запущен от hgff (verify/shot/status зовёт сам агент),
+# runuser недоступен (только root) → запускаем напрямую (hgff владеет :99). Только root уходит в runuser.
+U(){ if [ "$(id -u)" = "0" ]; then runuser -u hgff -- env -i HOME=/home/hgff PATH=/usr/local/bin:/usr/bin:/bin DISPLAY="$DISP" "$@"; else env DISPLAY="$DISP" "$@"; fi; }
 RD(){ setsid runuser -u hgff -- env -i HOME=/home/hgff PATH=/usr/local/bin:/usr/bin:/bin DISPLAY="$DISP" XDG_RUNTIME_DIR="$RT" ${PULSE:+PULSE_SERVER="$PULSE"} "$@" >>/tmp/rustdesk_kso.log 2>&1 </dev/null & }
 xup(){ U xdpyinfo >/dev/null 2>&1; }
 kill_on_display(){ local pat="$1" want="DISPLAY=$2" pid env; for pid in $(pgrep -f "$pat" 2>/dev/null); do [ -r "/proc/$pid/environ" ] || continue; env=$(tr '\0' '\n' < "/proc/$pid/environ" 2>/dev/null | grep -m1 '^DISPLAY='); [ "$env" = "$want" ] && { kill "$pid" 2>/dev/null && echo "  killed $pid ($pat @ $2)"; }; done; }
@@ -44,12 +46,19 @@ case "${1:-}" in
     ;;
   verify)
     ID="${2:?нужен ID}"
+    # окно сессии RustDesk: заголовок вида "<ID>@host - Remote Desktop - RustDesk".
+    # Ищем по ID; фоллбэк — по "Remote Desktop" (если хост-часть заголовка сместила ID).
     W=$(U xdotool search --name "$ID" 2>/dev/null | head -1)
+    [ -z "$W" ] && W=$(U xdotool search --name "Remote Desktop - RustDesk" 2>/dev/null | head -1)
     U scrot -o /tmp/rdv1.png 2>/dev/null; sleep 5; U scrot -o /tmp/rdv2.png 2>/dev/null
     D=$(compare -metric AE /tmp/rdv1.png /tmp/rdv2.png /dev/null 2>&1 | grep -oE '^[0-9]+' | head -1); [ -z "$D" ] && D=0
-    echo "session_window=${W:-нет} motion=${D}px"
-    # коннект подтверждён: есть окно сессии с ID И заметное движение (баннер кассы ~20k px) = живой удалённый экран
-    if [ -n "$W" ] && [ "$D" -gt 2000 ]; then echo "VERIFIED"; exit 0; else echo "NOT_VERIFIED"; exit 1; fi
+    # содержимое кадра: живой удалённый экран (киоск/десктоп) имеет высокую дисперсию яркости;
+    # чёрное/замороженное окно RustDesk ~0. Это надёжнее движения (idle-экран статичен → motion=0, но коннект жив).
+    SD=$(convert /tmp/rdv2.png -colorspace Gray -format "%[fx:standard_deviation]" info: 2>/dev/null); [ -z "$SD" ] && SD=0
+    HAS_CONTENT=$(awk -v s="$SD" 'BEGIN{print (s>0.03)?1:0}')
+    echo "session_window=${W:-нет} motion=${D}px content_sd=${SD}"
+    # коннект подтверждён: есть окно сессии И (движение ИЛИ ненулевое содержимое кадра = не чёрный экран)
+    if [ -n "$W" ] && { [ "$D" -gt 2000 ] || [ "$HAS_CONTENT" = "1" ]; }; then echo "VERIFIED"; exit 0; else echo "NOT_VERIFIED"; exit 1; fi
     ;;
   shot)  L="${2:-shot}"; U scrot -o "$SCREENS/$L.png" && convert "$SCREENS/$L.png" -quality 88 "$SCREENS/$L.jpg" && echo "$SCREENS/$L.jpg" ;;
   status)
