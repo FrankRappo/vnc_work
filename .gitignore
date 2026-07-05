@@ -19,3 +19,7 @@ diadoc_submit.mjs
 .DS_Store
 Thumbs.db
 profile_backups/
+
+# SSH channel PRIVATE keys — NEVER commit (public keys / known_hosts are fine)
+ssh_channel/kso_me
+ssh_channel/kso_tunnel
