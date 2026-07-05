@@ -8,7 +8,7 @@ REMOTE="$1"; OUT="${2:-/dev/stdout}"; PSX="${PSX:-850}"; PSY="${PSY:-250}"; WAIT
 N="ZG${$}$(date +%N | tail -c 5)"
 xdotool mousemove "$PSX" "$PSY" click 1; sleep 0.35
 xdotool key Escape; sleep 0.2
-xdotool type --delay 12 "Set-Clipboard ('$N'+[Convert]::ToBase64String([IO.File]::ReadAllBytes('$REMOTE')))"; sleep 0.3
+xdotool type --delay ${TDELAY:-55} "Set-Clipboard ('$N'+[Convert]::ToBase64String([IO.File]::ReadAllBytes('$REMOTE')))"; sleep 0.3
 xdotool key Return
 deadline=$(( $(date +%s) + WAIT )); b64=""
 while [ "$(date +%s)" -lt "$deadline" ]; do

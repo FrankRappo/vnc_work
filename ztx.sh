@@ -13,7 +13,7 @@ N="ZN${$}$(date +%N | tail -c 6)"
 WRAPPED="Set-Clipboard (\"$N\" + [Environment]::NewLine + ((& { $CMD } 2>&1 | Out-String)))"
 xdotool mousemove "$PSX" "$PSY" click 1; sleep 0.3
 xdotool key Escape; sleep 0.25
-xdotool type --delay 10 -- "$WRAPPED"; sleep 0.3
+xdotool type --delay ${TDELAY:-55} -- "$WRAPPED"; sleep 0.3
 xdotool key Return
 deadline=$(( $(date +%s) + WAIT )); out=""
 while [ "$(date +%s)" -lt "$deadline" ]; do

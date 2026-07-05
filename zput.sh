@@ -12,7 +12,7 @@ SYNC=$(( 3 + NB/6000 )); [ "$SYNC" -lt 3 ] && SYNC=3
 printf '%s' "$B64" | xclip -selection clipboard 2>/dev/null; sleep "$SYNC"
 xdotool mousemove "$PSX" "$PSY" click 1; sleep 0.35
 xdotool key Escape; sleep 0.2
-xdotool type --delay 14 "powershell -nop -ep bypass -f C:\\kso\\c2f.ps1 '$REMOTE'"; sleep 0.3
+xdotool type --delay ${TDELAY:-55} "powershell -nop -ep bypass -f C:\\kso\\c2f.ps1 '$REMOTE'"; sleep 0.3
 xdotool key Return
 sleep $(( 2 + NB/30000 ))
 verdict=$(WAIT=12 bash /work/vnc_work/ztx.sh "Get-Content C:\\kso\\c2f.out -Raw" | tr -d '\r\n ')
