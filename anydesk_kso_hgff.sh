@@ -11,6 +11,13 @@
 # AnyDesk = удалённый рабочий стол как ПИКСЕЛИ → координаты в НАТИВНЫХ 1920x1080.
 # ВСЕГДА: shot → (при необходимости convert -crop -resize для зума) → Read jpg →
 #         вычислить координаты по нативному кадру → click → ПРОВЕРИТЬ новым shot.
+#
+# 🔴 БУФЕР ОБМЕНА RustDesk СИНКАЕТСЯ МЕДЛЕННО (и двунаправленно — может вернуть старое значение).
+#    Для вставки текста в кассу (paste/paste2), ОСОБЕННО КИРИЛЛИЦЫ, нужна бОльшая задержка синка,
+#    иначе вставится пусто или обрежется (реально наблюдали: «Магазин Мацеста» → «Мацеста»).
+#    По умолчанию ждём RD_CLIP_SYNC=3с; при сбоях увеличивай (RD_CLIP_SYNC=5..8) и/или проверяй
+#    зумом, что текст дошёл. Многословную кириллицу лучше слать ПО ОДНОМУ СЛОВУ. ASCII/цифры
+#    надёжнее печатать через `type`; кириллицу через `type` НЕ слать (ломается раскладкой) — только paste.
 set -u
 export DISPLAY="${AD_DISPLAY:-:99}"
 SCREENS="${AD_SCREENS:-/work/kso/chat/obsled_screens}"
@@ -20,6 +27,8 @@ mkdir -p "$SCREENS" 2>/dev/null
 # клавиатуры часто уходит с окна сессии → xdotool type/key не доходят до кассы (грабля
 # kso-rustdesk-cmd-focus). Активируем окно сессии ПЕРЕД любым вводом (type/paste/paste2/key).
 RD_ID="${AD_RUSTDESK_ID:-243540605}"
+# Задержка синка буфера RustDesk перед Ctrl+V (см. заметку в шапке). Дольше = надёжнее для кириллицы.
+RD_CLIP_SYNC="${RD_CLIP_SYNC:-3}"
 _focus(){
   local w
   w=$(xdotool search --name "$RD_ID" 2>/dev/null | head -1)
@@ -37,11 +46,11 @@ case "${1:-}" in
   move)     xdotool mousemove "$2" "$3"; echo "move $2 $3" ;;
   drag)     # drag x1 y1 x2 y2 — press at (x1,y1), move to (x2,y2), release (for moving remote windows/panels)
             xdotool mousemove "$2" "$3"; xdotool mousedown 1; sleep 0.3; xdotool mousemove --sync "$4" "$5"; sleep 0.3; xdotool mouseup 1; echo "drag $2 $3 -> $4 $5" ;;
-  paste2)   # paste2 <text> — set clipboard then Ctrl+V with delay (RustDesk clipboard sync needs a beat)
-            printf '%s' "$2" | xclip -selection clipboard 2>/dev/null; sleep 1; _focus; xdotool key ctrl+v; echo "paste2 (waited for clipboard sync)" ;;
+  paste2)   # paste2 <text> — буфер + Ctrl+V с ПОЛНОЙ задержкой синка RustDesk (кириллица/длинный текст)
+            printf '%s' "$2" | xclip -selection clipboard 2>/dev/null; sleep "$RD_CLIP_SYNC"; _focus; xdotool key ctrl+v; echo "paste2 (ждал синк буфера ${RD_CLIP_SYNC}s)" ;;
   key)      _focus; shift; xdotool key "$@"; echo "key $*" ;;
   type)     _focus; xdotool type --delay 60 -- "$2"; echo "typed (ascii/digits only)" ;;
-  paste)    printf '%s' "$2" | xclip -selection clipboard 2>/dev/null; _focus; xdotool key ctrl+v; echo "pasted" ;;
+  paste)    printf '%s' "$2" | xclip -selection clipboard 2>/dev/null; sleep "$RD_CLIP_SYNC"; _focus; xdotool key ctrl+v; echo "pasted (ждал ${RD_CLIP_SYNC}s)" ;;
   scroll)   # scroll x y <up|down|left|right> [n] — hover (x,y) and wheel-scroll (left/right = horizontal, needs button 6/7)
             xdotool mousemove "$2" "$3"; case "$4" in up) B=4;; down) B=5;; left) B=6;; right) B=7;; *) B=5;; esac; N="${5:-3}"; for _i in $(seq 1 "$N"); do xdotool click "$B"; done; echo "scroll $4 x$N @ $2 $3" ;;
   pos)      xdotool getmouselocation 2>/dev/null ;;
